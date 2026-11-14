@@ -46,15 +46,7 @@ class AutomationAreaCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._update();
-    if (this._popup) {
-      this._popup.card.hass = hass;
-      const ids = this._automations();
-      const key = ids.join("|");
-      if (key !== this._popupKey) {
-        this._popupKey = key;
-        this._popup.card.setConfig(this._entitiesConfig(ids));
-      }
-    }
+    if (this._popup) this._renderPopupList();
   }
 
   getCardSize() { return 2; }
@@ -128,31 +120,62 @@ class AutomationAreaCard extends HTMLElement {
     return `${this._config.name || "Automatisierungen"}${names ? " – " + names : ""}`;
   }
 
-  _entitiesConfig(ids) {
-    return {
-      type: "entities",
-      show_header_toggle: true,
-      state_color: true,
-      entities: ids.map((entity) => ({ entity })),
-    };
-  }
-
-   async _openPopup() {
+  async _openPopup() {
     if (this._popup || !this._hass || !(this._config.areas || []).length) return;
-    const helpers = await window.loadCardHelpers();
     await Promise.race([
       customElements.whenDefined("ha-dialog"),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
 
-    const ids = this._automations();
-    this._popupKey = ids.join("|");
+    const wrapper = document.createElement("div");
+    const root = wrapper.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        .row { display:flex; align-items:center; gap:16px; padding:8px 4px;
+               min-height:40px; cursor:pointer; border-radius:8px; }
+        .row:hover { background: var(--secondary-background-color); }
+        .head { border-bottom:1px solid var(--divider-color); margin-bottom:4px;
+                border-radius:0; cursor:default; }
+        .head:hover { background:none; }
+        ha-icon { --mdc-icon-size:24px; flex:none; color:var(--state-inactive-color, var(--disabled-text-color)); }
+        .row.on ha-icon { color: var(--state-active-color, var(--primary-color)); }
+        .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                white-space:nowrap; color:var(--primary-text-color); }
+        .sw { position:relative; width:36px; height:14px; border-radius:7px; flex:none;
+              cursor:pointer; margin:0 8px;
+              background:var(--switch-unchecked-track-color, var(--disabled-color, #bdbdbd)); opacity:.6;
+              transition: background .15s; }
+        .sw::after { content:""; position:absolute; top:-3px; left:-2px; width:20px; height:20px;
+              border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.4);
+              background:var(--switch-unchecked-button-color, var(--primary-background-color, #fff));
+              transition: transform .15s, background .15s; }
+        .sw.on { background:var(--switch-checked-track-color, var(--primary-color)); opacity:.5; }
+        .sw.on::after { transform:translateX(18px);
+              background:var(--switch-checked-button-color, var(--primary-color)); }
+        .sw.na { pointer-events:none; opacity:.25; }
+        .empty { padding:16px; color:var(--secondary-text-color); }
+      </style>
+      <div id="list"></div>`;
 
-    const card = await helpers.createCardElement(this._entitiesConfig(ids));
-    card.hass = this._hass;
-    card.style.setProperty("--ha-card-background", "transparent");
-    card.style.setProperty("--ha-card-box-shadow", "none");
-    card.style.setProperty("--ha-card-border-width", "0px");
+    root.addEventListener("click", (ev) => {
+      const path = ev.composedPath();
+      const sw = path.find((n) => n.dataset && n.dataset.toggle);
+      if (sw) {
+        ev.stopPropagation();
+        const id = sw.dataset.toggle;
+        if (id === "__all__") {
+          const ids = this._automations();
+          const anyOn = ids.some((i) => this._hass.states[i].state === "on");
+          this._hass.callService("automation", anyOn ? "turn_off" : "turn_on", { entity_id: ids });
+        } else {
+          const on = this._hass.states[id]?.state === "on";
+          this._hass.callService("automation", on ? "turn_off" : "turn_on", { entity_id: id });
+        }
+        return;
+      }
+      const row = path.find((n) => n.dataset && n.dataset.entity);
+      if (row) fireEvent(this, "hass-more-info", { entityId: row.dataset.entity });
+    });
 
     const title = this._popupTitle();
     const dialog = document.createElement("ha-dialog");
@@ -160,7 +183,7 @@ class AutomationAreaCard extends HTMLElement {
     dialog.heading = title;
     dialog.setAttribute("width", "medium");
     dialog.style.setProperty("--dialog-content-padding", "0 16px 16px 16px");
-    dialog.appendChild(card);
+    dialog.appendChild(wrapper);
     dialog.addEventListener("closed", (ev) => {
       if (ev.target !== dialog) return;
       dialog.remove();
@@ -168,8 +191,52 @@ class AutomationAreaCard extends HTMLElement {
     });
 
     document.body.appendChild(dialog);
+    this._popup = { dialog, root, sig: "" };
+    this._renderPopupList();
     dialog.open = true;
-    this._popup = { dialog, card };
+  }
+
+  _renderPopupList() {
+    const p = this._popup;
+    if (!p) return;
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const ids = this._automations();
+    const sig = ids.map((id) => {
+      const s = this._hass.states[id];
+      return `${id}:${s.state}:${s.attributes.friendly_name || ""}:${s.attributes.icon || ""}`;
+    }).join("|");
+    if (sig === p.sig) return;
+    p.sig = sig;
+
+    const anyOn = ids.some((id) => this._hass.states[id].state === "on");
+    let html = "";
+    if (ids.length === 0) {
+      html = `<div class="empty">Keine Automatisierungen in den ausgewählten Bereichen.</div>`;
+    } else {
+      html += `<div class="row head ${anyOn ? "on" : ""}">
+        <div class="name"><b>Alle</b></div>
+        <div class="sw ${anyOn ? "on" : ""}" data-toggle="__all__"></div>
+      </div>`;
+      for (const id of ids) {
+        const s = this._hass.states[id];
+        const on = s.state === "on";
+        const na = s.state === "unavailable";
+        html += `<div class="row ${on ? "on" : ""}" data-entity="${id}">
+          <ha-icon icon="${esc(s.attributes.icon || "mdi:robot")}"></ha-icon>
+          <div class="name">${esc(s.attributes.friendly_name || id)}</div>
+          <div class="sw ${on ? "on" : ""} ${na ? "na" : ""}" data-toggle="${id}"></div>
+        </div>`;
+      }
+    }
+    p.root.getElementById("list").innerHTML = html;
+  }
+
+  _popupTitle() {
+    const names = (this._config.areas || [])
+      .map((a) => this._hass.areas?.[a]?.name)
+      .filter(Boolean)
+      .join(", ");
+    return `${this._config.name || "Automatisierungen"}${names ? " – " + names : ""}`;
   }
 
   _closePopup() {
