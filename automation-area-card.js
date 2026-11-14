@@ -218,6 +218,8 @@ class AutomationAreaCard extends HTMLElement {
   }
 
   _popupTitle() {
+    const custom = (this._config.popup_title || "").trim();
+    if (custom) return custom;
     const names = (this._config.areas || [])
       .map((a) => this._hass.areas?.[a]?.name)
       .filter(Boolean)
@@ -404,12 +406,19 @@ class AutomationAreaCardEditor extends HTMLElement {
       const form = document.createElement("ha-form");
             form.schema = [
         { name: "name", selector: { text: {} } },
+        { name: "popup_title", selector: { text: {} } },
         { name: "icon", selector: { icon: {} } },
         { name: "show_badge", selector: { boolean: {} } },
         { name: "areas", selector: { area: { multiple: true } } },
       ];
       form.computeLabel = (s) =>
-        ({ name: "Titel", icon: "Icon", show_badge: "Badge mit Gesamtzahl anzeigen", areas: "Bereiche" }[s.name] || s.name);
+        ({
+          name: "Titel",
+          popup_title: "Popup-Titel (leer = automatisch)",
+          icon: "Icon",
+          show_badge: "Badge mit Gesamtzahl anzeigen",
+          areas: "Bereiche",
+        }[s.name] || s.name);
       form.addEventListener("value-changed", (ev) => {
         ev.stopPropagation();
         this._config = { ...this._config, ...ev.detail.value };
