@@ -120,72 +120,68 @@ class AutomationAreaCard extends HTMLElement {
     }
   }
 
-  _entitiesConfig(ids) {
+  _popupTitle() {
     const names = (this._config.areas || [])
       .map((a) => this._hass.areas?.[a]?.name)
       .filter(Boolean)
       .join(", ");
+    return `${this._config.name || "Automatisierungen"}${names ? " – " + names : ""}`;
+  }
+
+  _entitiesConfig(ids) {
     return {
       type: "entities",
-      title: `${this._config.name || "Automatisierungen"}${names ? " – " + names : ""}`,
       show_header_toggle: true,
       state_color: true,
       entities: ids.map((entity) => ({ entity })),
     };
   }
 
-  async _openPopup() {
+   async _openPopup() {
     if (this._popup || !this._hass || !(this._config.areas || []).length) return;
     const helpers = await window.loadCardHelpers();
+    await Promise.race([
+      customElements.whenDefined("ha-dialog"),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
+
     const ids = this._automations();
     this._popupKey = ids.join("|");
 
     const card = await helpers.createCardElement(this._entitiesConfig(ids));
     card.hass = this._hass;
+    card.style.setProperty("--ha-card-background", "transparent");
+    card.style.setProperty("--ha-card-box-shadow", "none");
+    card.style.setProperty("--ha-card-border-width", "0px");
 
-    const overlay = document.createElement("div");
-    const root = overlay.attachShadow({ mode: "open" });
-    root.innerHTML = `
-      <style>
-        .backdrop {
-          position: fixed; inset: 0; z-index: 9999;
-          background: rgba(0,0,0,0.6);
-          display: flex; align-items: center; justify-content: center;
-        }
-        .box {
-          position: relative; width: 92%; max-width: 520px; max-height: 85vh;
-          overflow-y: auto; border-radius: var(--ha-card-border-radius, 12px);
-        }
-        .close {
-          position: absolute; top: 8px; right: 8px; z-index: 1;
-          background: none; border: none; cursor: pointer;
-          color: var(--primary-text-color); padding: 4px;
-        }
-      </style>
-      <div class="backdrop">
-        <div class="box">
-          <button class="close" title="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
-          <div id="slot"></div>
-        </div>
-      </div>`;
-    root.getElementById("slot").appendChild(card);
-    root.querySelector(".close").addEventListener("click", () => this._closePopup());
-    root.querySelector(".backdrop").addEventListener("click", (e) => {
-      if (e.target.classList.contains("backdrop")) this._closePopup();
+    const title = this._popupTitle();
+    const dialog = document.createElement("ha-dialog");
+    dialog.setAttribute("header-title", title);
+    dialog.heading = title;
+    dialog.setAttribute("width", "medium");
+    dialog.style.setProperty("--dialog-content-padding", "0 16px 16px 16px");
+    dialog.appendChild(card);
+    dialog.addEventListener("closed", (ev) => {
+      if (ev.target !== dialog) return;
+      dialog.remove();
+      this._popup = null;
     });
-    document.body.appendChild(overlay);
-    document.addEventListener("keydown", this._onKey);
-    this._popup = { overlay, card };
+
+    document.body.appendChild(dialog);
+    dialog.open = true;
+    this._popup = { dialog, card };
   }
 
   _closePopup() {
-    if (!this._popup) return;
-    this._popup.overlay.remove();
-    document.removeEventListener("keydown", this._onKey);
-    this._popup = null;
+    if (this._popup) this._popup.dialog.open = false;
   }
 
-  disconnectedCallback() { this._closePopup(); }
+  disconnectedCallback() {
+    if (this._popup) {
+      this._popup.dialog.remove();
+      this._popup = null;
+    }
+  }
 }
 
 class AutomationAreaCardEditor extends HTMLElement {
