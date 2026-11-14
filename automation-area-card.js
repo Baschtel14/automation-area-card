@@ -1,7 +1,10 @@
-const CARD_VERSION = "1.0.1b2";
+const CARD_VERSION = "1.1.0";
 
 const fireEvent = (node, type, detail = {}) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+
+const esc = (s) =>
+  String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 class AutomationAreaCard extends HTMLElement {
   constructor() {
@@ -9,12 +12,20 @@ class AutomationAreaCard extends HTMLElement {
     this._config = { areas: [] };
     this._lastHtml = "";
     this._popup = null;
-    this._popupKey = "";
-    this._onKey = (e) => { if (e.key === "Escape") this._closePopup(); };
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>
-        ha-card { cursor: pointer; padding: 12px 16px; }
+        ha-card {
+          position: relative; cursor: pointer; padding: 12px 16px; height: 100%;
+          box-sizing: border-box; outline: none; overflow: hidden;
+          transition: box-shadow 180ms ease-in-out, border-color 180ms ease-in-out;
+          -webkit-tap-highlight-color: transparent;
+        }
+        ha-card:focus-visible::after {
+          content: ""; position: absolute; inset: 0; pointer-events: none;
+          background: var(--primary-text-color); opacity: 0.08; border-radius: inherit;
+        }
+        ha-card:focus-visible { border-color: var(--primary-color); }
         .title { font-size: 1.1em; font-weight: 500; margin-bottom: 8px; }
         .row { display: flex; justify-content: space-around; align-items: center; }
         .stat { text-align: center; min-width: 70px; }
@@ -23,9 +34,21 @@ class AutomationAreaCard extends HTMLElement {
         ha-icon { --mdc-icon-size: 28px; }
         .warn { margin-top: 8px; font-size: 0.85em; color: var(--warning-color, #ff9800); }
         .err { color: var(--error-color, #f44336); font-weight: bold; }
+        ha-ripple:not(:defined) { display: none; }
+        ha-card:has(ha-ripple:not(:defined)):hover { background: var(--secondary-background-color); }
       </style>
-      <ha-card><div id="content"></div></ha-card>`;
-    this.shadowRoot.querySelector("ha-card").addEventListener("click", () => this._openPopup());
+      <ha-card tabindex="0" role="button">
+        <ha-ripple></ha-ripple>
+        <div id="content"></div>
+      </ha-card>`;
+    const card = this.shadowRoot.querySelector("ha-card");
+    card.addEventListener("click", () => this._openPopup());
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this._openPopup();
+      }
+    });
   }
 
   static getConfigElement() {
@@ -49,7 +72,40 @@ class AutomationAreaCard extends HTMLElement {
     if (this._popup) this._renderPopupList();
   }
 
+  connectedCallback() {
+    this._warmUp();
+  }
+
   getCardSize() { return 2; }
+
+  async _warmUp() {
+    if (AutomationAreaCard._warmed || !window.loadCardHelpers) return;
+    AutomationAreaCard._warmed = true;
+    try {
+      const helpers = await window.loadCardHelpers();
+      const holder = document.createElement("div");
+      holder.style.cssText = "position:fixed;left:-9999px;top:0;width:300px;opacity:0;pointer-events:none;";
+      document.body.appendChild(holder);
+      const waitForHass = () =>
+        new Promise((r) => {
+          const t = setInterval(() => { if (this._hass) { clearInterval(t); r(); } }, 100);
+          setTimeout(() => { clearInterval(t); r(); }, 3000);
+        });
+      await waitForHass();
+      if (!this._hass) { holder.remove(); return; }
+      const autoId = Object.keys(this._hass.states).find((i) => i.startsWith("automation."));
+      const cfgs = [{ type: "tile", entity: autoId || "sun.sun" }];
+      if (autoId) cfgs.push({ type: "entities", entities: [{ entity: autoId }] });
+      for (const cfg of cfgs) {
+        const el = await helpers.createCardElement(cfg);
+        el.hass = this._hass;
+        holder.appendChild(el);
+      }
+      setTimeout(() => holder.remove(), 3000);
+    } catch (e) {
+      /* Fallback-CSS greift */
+    }
+  }
 
   _areaOfEntity(id) {
     const ent = this._hass.entities?.[id];
@@ -77,7 +133,7 @@ class AutomationAreaCard extends HTMLElement {
     const areas = this._config.areas || [];
     const content = this.shadowRoot.getElementById("content");
     let html = "";
-    if (this._config.name) html += `<div class="title">${this._config.name}</div>`;
+    if (this._config.name) html += `<div class="title">${esc(this._config.name)}</div>`;
 
     const known = areas.filter((a) => this._hass.areas?.[a]);
     const unknown = areas.filter((a) => !this._hass.areas?.[a]);
@@ -85,7 +141,7 @@ class AutomationAreaCard extends HTMLElement {
     if (areas.length === 0) {
       html += `<div class="err">Keine Bereiche ausgewählt (Karte bearbeiten)</div>`;
     } else if (known.length === 0) {
-      html += `<div class="err">Keine gültigen Bereiche: ${unknown.join(", ")}</div>`;
+      html += `<div class="err">Keine gültigen Bereiche: ${esc(unknown.join(", "))}</div>`;
     } else {
       const ids = this._automations();
       const total = ids.length;
@@ -103,7 +159,7 @@ class AutomationAreaCard extends HTMLElement {
         ${stat("mdi:close-circle-outline", inactive > 0 ? "var(--error-color, #f44336)" : "var(--disabled-text-color)", inactive, "Inaktiv")}
       </div>`;
       if (unknown.length) {
-        html += `<div class="warn"><ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px"></ha-icon> Unbekannte Bereiche: ${unknown.join(", ")}</div>`;
+        html += `<div class="warn"><ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px"></ha-icon> Unbekannte Bereiche: ${esc(unknown.join(", "))}</div>`;
       }
     }
     if (html !== this._lastHtml) {
@@ -131,31 +187,46 @@ class AutomationAreaCard extends HTMLElement {
     const root = wrapper.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        .row { display:flex; align-items:center; gap:16px; padding:8px 4px;
-               min-height:40px; cursor:pointer; border-radius:8px; }
-        .row:hover { background: var(--secondary-background-color); }
-        .head { border-bottom:1px solid var(--divider-color); margin-bottom:4px;
-                border-radius:0; cursor:default; }
-        .head:hover { background:none; }
-        ha-icon { --mdc-icon-size:24px; flex:none; color:var(--state-inactive-color, var(--disabled-text-color)); }
+        .row {
+          position: relative; display: flex; align-items: center; gap: 16px;
+          padding: 8px 4px; min-height: 40px; cursor: pointer; border-radius: 8px;
+          overflow: hidden; outline: none; -webkit-tap-highlight-color: transparent;
+        }
+        .row:focus-visible::after {
+          content: ""; position: absolute; inset: 0; pointer-events: none;
+          background: var(--primary-text-color); opacity: 0.08;
+        }
+        .row.head { cursor: default; border-radius: 0; margin-bottom: 4px;
+                    border-bottom: 1px solid var(--divider-color); }
+        .row:has(ha-ripple:not(:defined)):hover { background: var(--secondary-background-color); }
+        ha-ripple:not(:defined) { display: none; }
+        ha-icon { --mdc-icon-size: 24px; flex: none; margin-left: 4px;
+                  color: var(--state-inactive-color, var(--disabled-text-color)); }
         .row.on ha-icon { color: var(--state-active-color, var(--primary-color)); }
-        .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
-                white-space:nowrap; color:var(--primary-text-color); }
-        .sw { position:relative; width:36px; height:14px; border-radius:7px; flex:none;
-              cursor:pointer; margin:0 8px;
-              background:var(--switch-unchecked-track-color, var(--disabled-color, #bdbdbd)); opacity:.6;
-              transition: background .15s; }
-        .sw::after { content:""; position:absolute; top:-3px; left:-2px; width:20px; height:20px;
-              border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.4);
-              background:var(--switch-unchecked-button-color, var(--primary-background-color, #fff));
-              transition: transform .15s, background .15s; }
-        .sw.on { background:var(--switch-checked-track-color, var(--primary-color)); opacity:.5; }
-        .sw.on::after { transform:translateX(18px);
-              background:var(--switch-checked-button-color, var(--primary-color)); }
-        .sw.na { pointer-events:none; opacity:.25; }
-        .empty { padding:16px; color:var(--secondary-text-color); }
+        .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; color: var(--primary-text-color); }
+        ha-switch { flex: none; margin-right: 4px; position: relative; z-index: 1; }
+
+        ha-switch:not(:defined) {
+          display: inline-block; position: relative; width: 36px; height: 14px;
+          border-radius: 7px; margin: 0 8px;
+          background: var(--switch-unchecked-track-color, var(--disabled-color, #bdbdbd)); opacity: 0.6;
+        }
+        ha-switch:not(:defined)::after {
+          content: ""; position: absolute; top: -3px; left: -2px; width: 20px; height: 20px;
+          border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+          background: var(--switch-unchecked-button-color, var(--primary-background-color, #fff));
+          transition: transform .15s;
+        }
+        ha-switch:not(:defined)[checked] { background: var(--switch-checked-track-color, var(--primary-color)); opacity: .5; }
+        ha-switch:not(:defined)[checked]::after { transform: translateX(18px);
+          background: var(--switch-checked-button-color, var(--primary-color)); }
+        .empty { padding: 16px; color: var(--secondary-text-color); }
       </style>
       <div id="list"></div>`;
+
+    const openMoreInfo = (id) => fireEvent(this, "hass-more-info", { entityId: id });
+    const failSafe = () => { if (this._popup) { this._popup.sig = ""; this._renderPopupList(); } };
 
     root.addEventListener("click", (ev) => {
       const path = ev.composedPath();
@@ -163,18 +234,29 @@ class AutomationAreaCard extends HTMLElement {
       if (sw) {
         ev.stopPropagation();
         const id = sw.dataset.toggle;
+        let p;
         if (id === "__all__") {
           const ids = this._automations();
           const anyOn = ids.some((i) => this._hass.states[i].state === "on");
-          this._hass.callService("automation", anyOn ? "turn_off" : "turn_on", { entity_id: ids });
+          p = this._hass.callService("automation", anyOn ? "turn_off" : "turn_on", { entity_id: ids });
         } else {
           const on = this._hass.states[id]?.state === "on";
-          this._hass.callService("automation", on ? "turn_off" : "turn_on", { entity_id: id });
+          p = this._hass.callService("automation", on ? "turn_off" : "turn_on", { entity_id: id });
         }
+        Promise.resolve(p).catch(failSafe);
         return;
       }
       const row = path.find((n) => n.dataset && n.dataset.entity);
-      if (row) fireEvent(this, "hass-more-info", { entityId: row.dataset.entity });
+      if (row) openMoreInfo(row.dataset.entity);
+    });
+
+    root.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const t = ev.target;
+      if (t && t.dataset && t.dataset.entity) {
+        ev.preventDefault();
+        openMoreInfo(t.dataset.entity);
+      }
     });
 
     const title = this._popupTitle();
@@ -199,7 +281,6 @@ class AutomationAreaCard extends HTMLElement {
   _renderPopupList() {
     const p = this._popup;
     if (!p) return;
-    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const ids = this._automations();
     const sig = ids.map((id) => {
       const s = this._hass.states[id];
@@ -213,30 +294,23 @@ class AutomationAreaCard extends HTMLElement {
     if (ids.length === 0) {
       html = `<div class="empty">Keine Automatisierungen in den ausgewählten Bereichen.</div>`;
     } else {
-      html += `<div class="row head ${anyOn ? "on" : ""}">
+      html += `<div class="row head">
         <div class="name"><b>Alle</b></div>
-        <div class="sw ${anyOn ? "on" : ""}" data-toggle="__all__"></div>
+        <ha-switch data-toggle="__all__" ${anyOn ? "checked" : ""}></ha-switch>
       </div>`;
       for (const id of ids) {
         const s = this._hass.states[id];
         const on = s.state === "on";
         const na = s.state === "unavailable";
-        html += `<div class="row ${on ? "on" : ""}" data-entity="${id}">
+        html += `<div class="row ${on ? "on" : ""}" data-entity="${id}" tabindex="0" role="button">
+          <ha-ripple></ha-ripple>
           <ha-icon icon="${esc(s.attributes.icon || "mdi:robot")}"></ha-icon>
           <div class="name">${esc(s.attributes.friendly_name || id)}</div>
-          <div class="sw ${on ? "on" : ""} ${na ? "na" : ""}" data-toggle="${id}"></div>
+          <ha-switch data-toggle="${id}" ${on ? "checked" : ""} ${na ? "disabled" : ""}></ha-switch>
         </div>`;
       }
     }
     p.root.getElementById("list").innerHTML = html;
-  }
-
-  _popupTitle() {
-    const names = (this._config.areas || [])
-      .map((a) => this._hass.areas?.[a]?.name)
-      .filter(Boolean)
-      .join(", ");
-    return `${this._config.name || "Automatisierungen"}${names ? " – " + names : ""}`;
   }
 
   _closePopup() {
