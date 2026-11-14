@@ -29,8 +29,11 @@ class AutomationAreaCard extends HTMLElement {
         ha-ripple:not(:defined) { display: none; }
         ha-card:has(ha-ripple:not(:defined)):hover { background: var(--secondary-background-color); }
 
-        .container { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
-        .main { display: flex; align-items: center; gap: 12px; }
+        .container {
+          display: flex; flex-wrap: wrap; align-items: center;
+          gap: 8px 12px; padding: 10px;
+        }
+        .main { display: flex; align-items: center; gap: 12px; flex: 1 1 140px; min-width: 0; }
         .shape {
           position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
@@ -54,7 +57,7 @@ class AutomationAreaCard extends HTMLElement {
           font-size: var(--ha-font-size-s, 12px); line-height: 16px;
           color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 1 auto; }
         .chip {
           display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 8px;
           border-radius: 16px; font-size: 13px; color: var(--primary-text-color);
@@ -62,7 +65,7 @@ class AutomationAreaCard extends HTMLElement {
         }
         .chip ha-icon { --mdc-icon-size: 18px; color: var(--c); }
         .chip b { font-weight: 600; }
-        .warn { font-size: 12px; color: var(--warning-color, #ff9800); }
+        .warn { flex: 1 1 100%; font-size: 12px; color: var(--warning-color, #ff9800); }
       </style>
       <ha-card tabindex="0" role="button">
         <ha-ripple></ha-ripple>
@@ -225,6 +228,10 @@ class AutomationAreaCard extends HTMLElement {
   async _openPopup() {
     if (this._popup || !this._hass || !(this._config.areas || []).length) return;
     await Promise.race([
+      customElements.whenDefined("ha-adaptive-dialog"),
+      new Promise((r) => setTimeout(r, 300)),
+    ]);
+    await Promise.race([
       customElements.whenDefined("ha-dialog"),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
@@ -306,20 +313,29 @@ class AutomationAreaCard extends HTMLElement {
     });
 
     const title = this._popupTitle();
-    const dialog = document.createElement("ha-dialog");
+    const tag = customElements.get("ha-adaptive-dialog") ? "ha-adaptive-dialog" : "ha-dialog";
+    const dialog = document.createElement(tag);
     dialog.setAttribute("header-title", title);
     dialog.heading = title;
     dialog.setAttribute("width", "medium");
     dialog.style.setProperty("--dialog-content-padding", "0 16px 16px 16px");
     dialog.appendChild(wrapper);
+
+    const onPop = () => {
+      if (!history.state?.aacPopup) dialog.open = false;
+    };
     dialog.addEventListener("closed", (ev) => {
       if (ev.target !== dialog) return;
+      window.removeEventListener("popstate", onPop);
       dialog.remove();
       this._popup = null;
+      if (history.state?.aacPopup) history.back();
     });
 
+    history.pushState({ aacPopup: true }, "");
+    window.addEventListener("popstate", onPop);
     document.body.appendChild(dialog);
-    this._popup = { dialog, root, sig: "" };
+    this._popup = { dialog, root, sig: "", onPop };
     this._renderPopupList();
     dialog.open = true;
   }
@@ -364,10 +380,11 @@ class AutomationAreaCard extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._popup) {
-      this._popup.dialog.remove();
-      this._popup = null;
-    }
+    if (!this._popup) return;
+    window.removeEventListener("popstate", this._popup.onPop);
+    this._popup.dialog.remove();
+    this._popup = null;
+    if (history.state?.aacPopup) history.back();
   }
 }
 
