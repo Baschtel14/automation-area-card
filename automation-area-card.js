@@ -14,10 +14,10 @@ class AutomationAreaCard extends HTMLElement {
     this._popup = null;
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
-      <style>
+            <style>
         ha-card {
-          position: relative; cursor: pointer; padding: 12px 16px; height: 100%;
-          box-sizing: border-box; outline: none; overflow: hidden;
+          position: relative; cursor: pointer; height: 100%; box-sizing: border-box;
+          overflow: hidden; outline: none;
           transition: box-shadow 180ms ease-in-out, border-color 180ms ease-in-out;
           -webkit-tap-highlight-color: transparent;
         }
@@ -26,16 +26,43 @@ class AutomationAreaCard extends HTMLElement {
           background: var(--primary-text-color); opacity: 0.08; border-radius: inherit;
         }
         ha-card:focus-visible { border-color: var(--primary-color); }
-        .title { font-size: 1.1em; font-weight: 500; margin-bottom: 8px; }
-        .row { display: flex; justify-content: space-around; align-items: center; }
-        .stat { text-align: center; min-width: 70px; }
-        .num { font-size: 1.8em; font-weight: 600; line-height: 1.1; }
-        .label { font-size: 0.8em; color: var(--secondary-text-color); }
-        ha-icon { --mdc-icon-size: 28px; }
-        .warn { margin-top: 8px; font-size: 0.85em; color: var(--warning-color, #ff9800); }
-        .err { color: var(--error-color, #f44336); font-weight: bold; }
         ha-ripple:not(:defined) { display: none; }
         ha-card:has(ha-ripple:not(:defined)):hover { background: var(--secondary-background-color); }
+
+        .container { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+        .main { display: flex; align-items: center; gap: 12px; }
+        .shape {
+          position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          color: var(--c); background: color-mix(in srgb, var(--c) 20%, transparent);
+        }
+        .shape ha-icon { --mdc-icon-size: 24px; }
+        .badge {
+          position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
+          padding: 0 3px; box-sizing: border-box; border-radius: 9px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 10px; font-weight: 600; line-height: 1;
+          color: var(--text-primary-color, #fff); background: var(--b, var(--primary-color));
+          border: 2px solid var(--ha-card-background, var(--card-background-color, #fff));
+        }
+        .info { flex: 1; min-width: 0; }
+        .primary {
+          font-size: var(--ha-font-size-m, 14px); font-weight: 500; line-height: 20px;
+          color: var(--primary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .secondary {
+          font-size: var(--ha-font-size-s, 12px); line-height: 16px;
+          color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        .chip {
+          display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 8px;
+          border-radius: 16px; font-size: 13px; color: var(--primary-text-color);
+          background: color-mix(in srgb, var(--c) 14%, transparent);
+        }
+        .chip ha-icon { --mdc-icon-size: 18px; color: var(--c); }
+        .chip b { font-weight: 600; }
+        .warn { font-size: 12px; color: var(--warning-color, #ff9800); }
       </style>
       <ha-card tabindex="0" role="button">
         <ha-ripple></ha-ripple>
@@ -56,12 +83,12 @@ class AutomationAreaCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { name: "Automatisierungen", areas: [] };
+    return { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, areas: [] };
   }
 
   setConfig(config) {
     if (!config) throw new Error("Ungültige Konfiguration");
-    this._config = { name: "Automatisierungen", areas: [], ...config };
+    this._config = { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, areas: [], ...config };
     this._lastHtml = "";
     this._update();
   }
@@ -130,38 +157,57 @@ class AutomationAreaCard extends HTMLElement {
 
   _update() {
     if (!this._hass) return;
-    const areas = this._config.areas || [];
+    const cfg = this._config;
+    const areas = cfg.areas || [];
     const content = this.shadowRoot.getElementById("content");
-    let html = "";
-    if (this._config.name) html += `<div class="title">${esc(this._config.name)}</div>`;
-
     const known = areas.filter((a) => this._hass.areas?.[a]);
     const unknown = areas.filter((a) => !this._hass.areas?.[a]);
 
+    const main = (icon, color, primary, secondary, badge = "") => `
+      <div class="main">
+        <div class="shape" style="--c:${color}">
+          <ha-icon icon="${esc(icon)}"></ha-icon>${badge}
+        </div>
+        <div class="info">
+          <div class="primary">${esc(primary)}</div>
+          <div class="secondary">${esc(secondary)}</div>
+        </div>
+      </div>`;
+
+    let body = "";
     if (areas.length === 0) {
-      html += `<div class="err">Keine Bereiche ausgewählt (Karte bearbeiten)</div>`;
+      body = main("mdi:alert-circle-outline", "var(--warning-color, #ff9800)",
+        cfg.name || "Automatisierungen", "Keine Bereiche ausgewählt");
     } else if (known.length === 0) {
-      html += `<div class="err">Keine gültigen Bereiche: ${esc(unknown.join(", "))}</div>`;
+      body = main("mdi:alert-circle-outline", "var(--error-color, #f44336)",
+        cfg.name || "Automatisierungen", `Keine gültigen Bereiche: ${unknown.join(", ")}`);
     } else {
       const ids = this._automations();
       const total = ids.length;
       const active = ids.filter((id) => this._hass.states[id].state === "on").length;
       const inactive = total - active;
-      const stat = (icon, color, num, label) => `
-        <div class="stat">
-          <ha-icon icon="${icon}" style="color:${color}"></ha-icon>
-          <div class="num">${num}</div>
-          <div class="label">${label}</div>
+      const names = known.map((a) => this._hass.areas[a].name).join(", ");
+      const iconColor = total === 0 || active === 0
+        ? "var(--state-inactive-color, var(--disabled-text-color))"
+        : "var(--state-active-color, var(--primary-color))";
+      const badge = cfg.show_badge !== false
+        ? `<div class="badge">${total}</div>` : "";
+      body = main(cfg.icon || "mdi:robot", iconColor, cfg.name || "Automatisierungen", names, badge);
+      body += `
+        <div class="chips">
+          <div class="chip" style="--c:var(--success-color, #4caf50)">
+            <ha-icon icon="mdi:check-circle-outline"></ha-icon><b>${active}</b> Aktiv
+          </div>
+          <div class="chip" style="--c:${inactive > 0 ? "var(--secondary-text-color)" : "var(--disabled-text-color)"}">
+            <ha-icon icon="mdi:close-circle-outline"></ha-icon><b>${inactive}</b> Nicht aktiv
+          </div>
         </div>`;
-      html += `<div class="row">
-        ${stat("mdi:cog-outline", "var(--primary-color)", total, "Gesamt")}
-        ${stat("mdi:check-circle-outline", "var(--success-color, #4caf50)", active, "Aktiv")}
-        ${stat("mdi:close-circle-outline", inactive > 0 ? "var(--error-color, #f44336)" : "var(--disabled-text-color)", inactive, "Inaktiv")}
-      </div>`;
       if (unknown.length) {
-        html += `<div class="warn"><ha-icon icon="mdi:alert-outline" style="--mdc-icon-size:16px"></ha-icon> Unbekannte Bereiche: ${esc(unknown.join(", "))}</div>`;
+        body += `<div class="warn">Unbekannte Bereiche: ${esc(unknown.join(", "))}</div>`;
       }
     }
+
+    const html = `<div class="container">${body}</div>`;
     if (html !== this._lastHtml) {
       this._lastHtml = html;
       content.innerHTML = html;
@@ -339,11 +385,14 @@ class AutomationAreaCardEditor extends HTMLElement {
   _render() {
     if (!this._form) {
       const form = document.createElement("ha-form");
-      form.schema = [
+            form.schema = [
         { name: "name", selector: { text: {} } },
+        { name: "icon", selector: { icon: {} } },
+        { name: "show_badge", selector: { boolean: {} } },
         { name: "areas", selector: { area: { multiple: true } } },
       ];
-      form.computeLabel = (s) => ({ name: "Titel", areas: "Bereiche" }[s.name] || s.name);
+      form.computeLabel = (s) =>
+        ({ name: "Titel", icon: "Icon", show_badge: "Badge mit Gesamtzahl anzeigen", areas: "Bereiche" }[s.name] || s.name);
       form.addEventListener("value-changed", (ev) => {
         ev.stopPropagation();
         this._config = { ...this._config, ...ev.detail.value };
