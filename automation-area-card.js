@@ -1,4 +1,4 @@
-const CARD_VERSION = "1.0.4";
+const CARD_VERSION = "1.0.5b1";
 
 const fireEvent = (node, type, detail = {}) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -86,12 +86,12 @@ class AutomationAreaCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, areas: [] };
+    return { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, show_last_triggered: true, areas: [] };
   }
 
   setConfig(config) {
     if (!config) throw new Error("Ungültige Konfiguration");
-    this._config = { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, areas: [], ...config };
+    this._config = { name: "Automatisierungen", icon: "mdi:robot", show_badge: true, show_last_triggered: true, areas: [], ...config };
     this._lastHtml = "";
     this._update();
   }
@@ -125,7 +125,7 @@ class AutomationAreaCard extends HTMLElement {
       if (!this._hass) { holder.remove(); return; }
       const autoId = Object.keys(this._hass.states).find((i) => i.startsWith("automation."));
       const cfgs = [{ type: "tile", entity: autoId || "sun.sun" }];
-      if (autoId) cfgs.push({ type: "entities", entities: [{ entity: autoId }] });
+      if (autoId) cfgs.push({ type: "entities", entities: [{ entity: autoId, secondary_info: "last-triggered" }] });
       for (const cfg of cfgs) {
         const el = await helpers.createCardElement(cfg);
         el.hass = this._hass;
@@ -260,6 +260,12 @@ class AutomationAreaCard extends HTMLElement {
         .row.on ha-icon { color: var(--state-active-color, var(--primary-color)); }
         .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; color: var(--primary-text-color); }
+        .text { flex: 1; min-width: 0; }
+        .text .name { flex: none; }
+        .secondary { font-size: var(--ha-font-size-s, 12px); line-height: 16px;
+                     color: var(--secondary-text-color); overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+        ha-relative-time:not(:defined)::after { content: attr(data-fb); }
         ha-switch { flex: none; margin-right: 4px; position: relative; z-index: 1; }
 
         ha-switch:not(:defined) {
@@ -345,17 +351,31 @@ class AutomationAreaCard extends HTMLElement {
     dialog.open = true;
   }
 
+  _relFallback(iso) {
+    try {
+      const rtf = new Intl.RelativeTimeFormat(this._hass.locale?.language || "de", { numeric: "auto" });
+      const diff = (new Date(iso).getTime() - Date.now()) / 1000;
+      const units = [["year", 31536000], ["month", 2592000], ["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]];
+      for (const [unit, sec] of units) {
+        if (Math.abs(diff) >= sec || unit === "second") return rtf.format(Math.round(diff / sec), unit);
+      }
+    } catch (e) { /* ignore */ }
+    return iso;
+  }
+
   _renderPopupList() {
     const p = this._popup;
     if (!p) return;
+    const showLt = this._config.show_last_triggered !== false;
     const ids = this._automations();
     const sig = ids.map((id) => {
       const s = this._hass.states[id];
-      return `${id}:${s.state}:${s.attributes.friendly_name || ""}:${s.attributes.icon || ""}`;
-    }).join("|");
+      return `${id}:${s.state}:${s.attributes.friendly_name || ""}:${s.attributes.icon || ""}:${s.attributes.last_triggered || ""}`;
+    }).join("|") + `|${showLt}`;
     if (sig === p.sig) return;
     p.sig = sig;
 
+    const lang = this._hass.locale?.language || "de";
     const anyOn = ids.some((id) => this._hass.states[id].state === "on");
     let html = "";
     if (ids.length === 0) {
@@ -369,14 +389,34 @@ class AutomationAreaCard extends HTMLElement {
         const s = this._hass.states[id];
         const on = s.state === "on";
         const na = s.state === "unavailable";
+        let secondary = "";
+        if (showLt) {
+          const lt = s.attributes.last_triggered;
+          if (lt) {
+            const abs = new Date(lt).toLocaleString(lang, { dateStyle: "medium", timeStyle: "medium" });
+            secondary = `<div class="secondary" title="${esc(abs)}">Zuletzt ausgelöst:
+              <ha-relative-time data-dt="${esc(lt)}" data-fb="${esc(this._relFallback(lt))}"></ha-relative-time></div>`;
+          } else {
+            secondary = `<div class="secondary">Nie ausgelöst</div>`;
+          }
+        }
         html += `<div class="row ${on ? "on" : ""}" data-entity="${id}" tabindex="0" role="button">
+          <ha-ripple></ha-ripple>
           <ha-icon icon="${esc(s.attributes.icon || "mdi:robot")}"></ha-icon>
-          <div class="name">${esc(s.attributes.friendly_name || id)}</div>
+          <div class="text">
+            <div class="name">${esc(s.attributes.friendly_name || id)}</div>
+            ${secondary}
+          </div>
           <ha-switch data-toggle="${id}" ${on ? "checked" : ""} ${na ? "disabled" : ""}></ha-switch>
         </div>`;
       }
     }
-    p.root.getElementById("list").innerHTML = html;
+    const list = p.root.getElementById("list");
+    list.innerHTML = html;
+    list.querySelectorAll("ha-relative-time").forEach((el) => {
+      el.hass = this._hass;
+      el.datetime = el.dataset.dt;
+    });
   }
 
   _closePopup() {
@@ -406,11 +446,12 @@ class AutomationAreaCardEditor extends HTMLElement {
   _render() {
     if (!this._form) {
       const form = document.createElement("ha-form");
-            form.schema = [
+      form.schema = [
         { name: "name", selector: { text: {} } },
         { name: "popup_title", selector: { text: {} } },
         { name: "icon", selector: { icon: {} } },
         { name: "show_badge", selector: { boolean: {} } },
+        { name: "show_last_triggered", selector: { boolean: {} } },
         { name: "areas", selector: { area: { multiple: true } } },
       ];
       form.computeLabel = (s) =>
@@ -419,6 +460,7 @@ class AutomationAreaCardEditor extends HTMLElement {
           popup_title: "Popup-Titel (leer = automatisch)",
           icon: "Icon",
           show_badge: "Badge mit Gesamtzahl anzeigen",
+          show_last_triggered: "Zuletzt ausgelöst im Popup anzeigen",
           areas: "Bereiche",
         }[s.name] || s.name);
       form.addEventListener("value-changed", (ev) => {

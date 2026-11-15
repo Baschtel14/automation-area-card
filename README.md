@@ -60,6 +60,7 @@ areas:
 | `popup_title` | string            | leer                | Titel des Popups. Leer = Karten-Titel plus Bereichsnamen                      |
 | `icon`        | string            | `mdi:robot`         | Icon im runden Symbol der Karte                                               |
 | `show_badge`  | boolean           | `true`              | Badge mit der Gesamtzahl am Icon                                              |
+| `show_last_triggered`  | boolean           | `true`     | Zeile 'Zuletzt ausgelöst' im Popup                                            |
 
 Die Area-ID siehst du, wenn du die Bereiche im Editor auswählst und danach in den YAML-Modus wechselst.
 
