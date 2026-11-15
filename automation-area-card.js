@@ -1,4 +1,4 @@
-const CARD_VERSION = "1.0.5b1";
+const CARD_VERSION = "1.0.5b2";
 
 const fireEvent = (node, type, detail = {}) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -12,9 +12,10 @@ class AutomationAreaCard extends HTMLElement {
     this._config = { areas: [] };
     this._lastHtml = "";
     this._popup = null;
+    this._opening = false;
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
-            <style>
+      <style>
         ha-card {
           position: relative; cursor: pointer; height: 100%; box-sizing: border-box;
           overflow: hidden; outline: none;
@@ -108,6 +109,10 @@ class AutomationAreaCard extends HTMLElement {
 
   getCardSize() { return 2; }
 
+  getGridOptions() {
+    return { columns: 6, rows: 2, min_columns: 3, min_rows: 1 };
+  }
+
   async _warmUp() {
     if (AutomationAreaCard._warmed || !window.loadCardHelpers) return;
     AutomationAreaCard._warmed = true;
@@ -125,7 +130,7 @@ class AutomationAreaCard extends HTMLElement {
       if (!this._hass) { holder.remove(); return; }
       const autoId = Object.keys(this._hass.states).find((i) => i.startsWith("automation."));
       const cfgs = [{ type: "tile", entity: autoId || "sun.sun" }];
-      if (autoId) cfgs.push({ type: "entities", entities: [{ entity: autoId, secondary_info: "last-triggered" }] });
+      if (autoId) cfgs.push({ type: "entities", entities: [{ entity: autoId }] });
       for (const cfg of cfgs) {
         const el = await helpers.createCardElement(cfg);
         el.hass = this._hass;
@@ -228,16 +233,24 @@ class AutomationAreaCard extends HTMLElement {
   }
 
   async _openPopup() {
-    if (this._popup || !this._hass || !(this._config.areas || []).length) return;
-    await Promise.race([
-      customElements.whenDefined("ha-adaptive-dialog"),
-      new Promise((r) => setTimeout(r, 300)),
-    ]);
-    await Promise.race([
-      customElements.whenDefined("ha-dialog"),
-      new Promise((r) => setTimeout(r, 1500)),
-    ]);
+    if (this._popup || this._opening || !this._hass || !(this._config.areas || []).length) return;
+    this._opening = true;
+    try {
+      await Promise.race([
+        customElements.whenDefined("ha-adaptive-dialog"),
+        new Promise((r) => setTimeout(r, 300)),
+      ]);
+      await Promise.race([
+        customElements.whenDefined("ha-dialog"),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]);
+      this._buildPopup();
+    } finally {
+      this._opening = false;
+    }
+  }
 
+  _buildPopup() {
     const wrapper = document.createElement("div");
     const root = wrapper.attachShadow({ mode: "open" });
     root.innerHTML = `
@@ -265,7 +278,6 @@ class AutomationAreaCard extends HTMLElement {
         .secondary { font-size: var(--ha-font-size-s, 12px); line-height: 16px;
                      color: var(--secondary-text-color); overflow: hidden;
                      text-overflow: ellipsis; white-space: nowrap; }
-        ha-relative-time:not(:defined)::after { content: attr(data-fb); }
         ha-switch { flex: none; margin-right: 4px; position: relative; z-index: 1; }
 
         ha-switch:not(:defined) {
@@ -338,6 +350,7 @@ class AutomationAreaCard extends HTMLElement {
     dialog.addEventListener("closed", (ev) => {
       if (ev.target !== dialog) return;
       window.removeEventListener("popstate", onPop);
+      if (this._popup) clearInterval(this._popup.timer);
       dialog.remove();
       this._popup = null;
       if (history.state?.aacPopup) history.back();
@@ -347,6 +360,7 @@ class AutomationAreaCard extends HTMLElement {
     window.addEventListener("popstate", onPop);
     document.body.appendChild(dialog);
     this._popup = { dialog, root, sig: "", onPop };
+    this._popup.timer = setInterval(() => this._updateRel(), 30000);
     this._renderPopupList();
     dialog.open = true;
   }
@@ -361,6 +375,13 @@ class AutomationAreaCard extends HTMLElement {
       }
     } catch (e) { /* ignore */ }
     return iso;
+  }
+
+  _updateRel() {
+    if (!this._popup) return;
+    this._popup.root.querySelectorAll(".rel").forEach((el) => {
+      el.textContent = this._relFallback(el.dataset.dt);
+    });
   }
 
   _renderPopupList() {
@@ -395,7 +416,7 @@ class AutomationAreaCard extends HTMLElement {
           if (lt) {
             const abs = new Date(lt).toLocaleString(lang, { dateStyle: "medium", timeStyle: "medium" });
             secondary = `<div class="secondary" title="${esc(abs)}">Zuletzt ausgelöst:
-              <ha-relative-time data-dt="${esc(lt)}" data-fb="${esc(this._relFallback(lt))}"></ha-relative-time></div>`;
+              <span class="rel" data-dt="${esc(lt)}">${esc(this._relFallback(lt))}</span></div>`;
           } else {
             secondary = `<div class="secondary">Nie ausgelöst</div>`;
           }
@@ -411,12 +432,7 @@ class AutomationAreaCard extends HTMLElement {
         </div>`;
       }
     }
-    const list = p.root.getElementById("list");
-    list.innerHTML = html;
-    list.querySelectorAll("ha-relative-time").forEach((el) => {
-      el.hass = this._hass;
-      el.datetime = el.dataset.dt;
-    });
+    p.root.getElementById("list").innerHTML = html;
   }
 
   _closePopup() {
@@ -426,6 +442,7 @@ class AutomationAreaCard extends HTMLElement {
   disconnectedCallback() {
     if (!this._popup) return;
     window.removeEventListener("popstate", this._popup.onPop);
+    clearInterval(this._popup.timer);
     this._popup.dialog.remove();
     this._popup = null;
     if (history.state?.aacPopup) history.back();
