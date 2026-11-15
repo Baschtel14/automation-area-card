@@ -1,4 +1,4 @@
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.0.3";
 
 const fireEvent = (node, type, detail = {}) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -367,7 +367,6 @@ class AutomationAreaCard extends HTMLElement {
         const on = s.state === "on";
         const na = s.state === "unavailable";
         html += `<div class="row ${on ? "on" : ""}" data-entity="${id}" tabindex="0" role="button">
-          <ha-ripple></ha-ripple>
           <ha-icon icon="${esc(s.attributes.icon || "mdi:robot")}"></ha-icon>
           <div class="name">${esc(s.attributes.friendly_name || id)}</div>
           <ha-switch data-toggle="${id}" ${on ? "checked" : ""} ${na ? "disabled" : ""}></ha-switch>
