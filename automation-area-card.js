@@ -1,4 +1,4 @@
-const CARD_VERSION = "1.0.5b2";
+const CARD_VERSION = "1.0.5b3";
 
 const fireEvent = (node, type, detail = {}) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
