@@ -321,6 +321,9 @@ class AutomationAreaCard extends HTMLElement {
     dialog.heading = title;
     dialog.setAttribute("width", "medium");
     dialog.style.setProperty("--dialog-content-padding", "0 16px 16px 16px");
+    dialog.style.setProperty("--dialog-surface-margin-top", "40px");
+    dialog.style.setProperty("--ha-bottom-sheet-height", "90vh");
+    dialog.style.setProperty("--ha-bottom-sheet-max-height", "90vh");
     dialog.appendChild(wrapper);
 
     const onPop = () => {
