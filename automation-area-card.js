@@ -110,7 +110,7 @@ class AutomationAreaCard extends HTMLElement {
   getCardSize() { return 2; }
 
   getGridOptions() {
-    return { columns: 6, rows: 2, min_columns: 3, min_rows: 1 };
+    return { columns: 12, rows: "auto", min_columns: 3 };
   }
 
   async _warmUp() {
